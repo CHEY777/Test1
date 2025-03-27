@@ -1,42 +1,40 @@
-const { default: MikuConnect, useSingleFileAuthState } = require("@whiskeysockets/baileys");
-const qrcode = require("qrcode-terminal");
-const fs = require("fs-extra");
+const makeWASocket = require('@whiskeysockets/baileys').default;
+const { useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
+const P = require('pino');
 
-const sessionFile = "./session.json";
-const { state, saveState } = useSingleFileAuthState(sessionFile);
+async function connectToWhatsApp() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
-const miku = MikuConnect({
-    auth: state,
-    printQRInTerminal: true
-});
+    const sock = makeWASocket({
+        auth: state,
+        logger: P({ level: 'silent' }),
+        printQRInTerminal: true,
+    });
 
-miku.ev.on("creds.update", saveState);
+    sock.ev.on('creds.update', saveCreds);
 
-miku.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === "close") {
-        console.log("Connection closed. Reconnecting...");
-        startBot();
-    } else if (connection === "open") {
-        console.log("Bot connected successfully!");
-    }
-});
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Connection closed due to', lastDisconnect.error, ', reconnecting:', shouldReconnect);
+            if (shouldReconnect) {
+                connectToWhatsApp();
+            }
+        } else if (connection === 'open') {
+            console.log('Connected to WhatsApp');
+        }
+    });
 
-miku.ev.on("messages.upsert", async ({ messages }) => {
-    const msg = messages[0];
-    if (!msg.message) return;
-    const sender = msg.key.remoteJid;
-    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+    sock.ev.on('messages.upsert', (m) => {
+        console.log(JSON.stringify(m, undefined, 2));
 
-    console.log(`Message from ${sender}: ${text}`);
-    
-    if (text.toLowerCase() === "anya") {
-        await miku.sendMessage(sender, { text: "Hello! I am Anya Bot!" });
-    }
-});
-
-function startBot() {
-    console.log("Starting Anya Bot...");
+        const msg = m.messages[0];
+        if (!msg.key.fromMe && m.type === 'notify') {
+            sock.sendMessage(msg.key.remoteJid, { text: 'Hello!' });
+        }
+    });
 }
 
-startBot();
+connectToWhatsApp();
