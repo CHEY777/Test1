@@ -18,21 +18,25 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed due to', lastDisconnect.error, ', reconnecting:', shouldReconnect);
             if (shouldReconnect) {
                 connectToWhatsApp();
             }
-        } else if (connection === 'open') {
-            console.log('Connected to WhatsApp');
         }
     });
 
-    sock.ev.on('messages.upsert', (m) => {
-        console.log(JSON.stringify(m, undefined, 2));
-
+    sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
-        if (!msg.key.fromMe && m.type === 'notify') {
-            sock.sendMessage(msg.key.remoteJid, { text: 'Hello!' });
+        if (!msg.message) return;
+        const from = msg.key.remoteJid;
+
+        const forwardedInfo = msg.message?.extendedTextMessage?.contextInfo?.forwardedNewsletterMessageInfo;
+
+        if (forwardedInfo) {
+            await sock.sendMessage(from, {
+                text: `*Channel Post Info:*\n• Newsletter JID: ${forwardedInfo.newsletterJid}\n• Name: ${forwardedInfo.newsletterName}\n• Message ID: ${forwardedInfo.serverMessageId}`
+            });
+        } else if (!msg.key.fromMe && m.type === 'notify') {
+            await sock.sendMessage(from, { text: 'Hello!' });
         }
     });
 }
